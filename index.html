@@ -1,0 +1,688 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitoring Portofolio Kredit - BTPN Syariah</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- SheetJS (Untuk Export Excel) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- html2canvas (Untuk Export Gambar EWS HD) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <style>
+        .kol-1 { background-color: #d1fae5; color: #065f46; border: 1px solid #34d399;} 
+        .kol-2 { background-color: #fef3c7; color: #92400e; border: 1px solid #fbbf24;} 
+        .kol-3 { background-color: #ffedd5; color: #9a3412; border: 1px solid #fdba74;} 
+        .kol-4 { background-color: #fee2e2; color: #b91c1c; border: 1px solid #f87171;} 
+        .kol-5 { background-color: #fecaca; color: #7f1d1d; border: 1px solid #ef4444;} 
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        .modal-animate { animation: fadeIn 0.2s ease-out forwards; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="bg-slate-50 font-sans text-slate-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect, useRef } = React;
+
+        const hitungRate = (nper, pmt, pv) => {
+            if (nper === 0) return 0;
+            let rate = 0.05; 
+            for (let i = 0; i < 100; i++) {
+                let f = pv * Math.pow(1 + rate, nper) + pmt * (Math.pow(1 + rate, nper) - 1) / rate;
+                let df = pv * nper * Math.pow(1 + rate, nper - 1) + pmt * ((nper * Math.pow(1 + rate, nper - 1) * rate - (Math.pow(1 + rate, nper) - 1)) / (rate * rate));
+                let newRate = rate - f / df;
+                if (Math.abs(newRate - rate) < 1e-7) return newRate;
+                rate = newRate;
+            }
+            return rate;
+        };
+
+        const hitungBakiDebet = (plafon, tenor, angsuranTerbayar, angsuranPerBulan) => {
+            if (!plafon || !tenor || tenor <= 0 || !angsuranPerBulan) return plafon || 0;
+            if (angsuranTerbayar >= tenor) return 0;
+            if (angsuranTerbayar <= 0) return plafon;
+
+            try {
+                const rate = hitungRate(tenor, -angsuranPerBulan, plafon);
+                if (rate <= 0 || isNaN(rate)) {
+                    const bakiFlat = plafon - ((plafon / tenor) * angsuranTerbayar);
+                    return Math.max(0, Math.round(bakiFlat));
+                }
+                const sisaTenor = tenor - angsuranTerbayar;
+                const baki = angsuranPerBulan * ((1 - Math.pow(1 + rate, -sisaTenor)) / rate);
+                return Math.max(0, Math.round(baki));
+            } catch (e) {
+                return plafon; 
+            }
+        };
+
+        const calculateDPD = (jatuhTempoStr, statusTunggakan) => {
+            if (statusTunggakan === 0) return 0;
+            const dueDay = parseInt(jatuhTempoStr.replace(/\D/g, ''));
+            if (isNaN(dueDay)) return 0;
+
+            const today = new Date();
+            let missedDate = new Date(today.getFullYear(), today.getMonth(), dueDay);
+
+            if (missedDate > today) {
+                missedDate.setMonth(missedDate.getMonth() - 1);
+            }
+            missedDate.setMonth(missedDate.getMonth() - (statusTunggakan - 1));
+
+            const diffTime = today - missedDate;
+            if (diffTime < 0) return 0; 
+            return Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        };
+
+        const ifoList = ["Agung", "Fajri", "Dinda", "Oky"];
+
+        // Data 124 Nasabah
+        const compressedData = [["10099332","SEKHIZATULO LAOLI","KFIF MEDAN","1042442287","11","2025-11-11",10000000,18,10,775556,""],["10099389","LENI NAPITUPULU","KFIF MEDAN","1024989433","13","2025-11-13",10000000,18,10,775556,""],["10099445","MARIANA PASARIBU","KFIF MEDAN","1042738006","17","2025-11-17",10000000,18,10,775556,""],["10099495","PESTA SIANTURI","KFIF MEDAN","1022112418","18","2025-11-18",10000000,18,10,775556,""],["10099589","HAFIS PRISTIAN","KFIF MEDAN","1039055477","24","2025-11-24",23000000,18,10,1783778,""],["10099615","RAMA ADITYA NUGRAHA","KFIF MEDAN","1037094079","25","2025-11-25",10000000,18,10,775556,""],["10099724","HARIYANTO TARIGAN","KFIF MEDAN","1034739605","2","2025-12-02",20000000,18,10,1551111,""],["10099789","HASRIZAL","KFIF MEDAN","1040883618","8","2025-12-08",18000000,12,9,1896000,""],["10099800","MANIHAR SITUMEANG","KFIF MEDAN","1043283827","8","2025-12-08",10000000,18,9,775556,""],["10099793","NUNING HIDAYANTI","KFIF MEDAN","1043282782","8","2025-12-08",15000000,18,2,1163333,""],["10099943","SITI FATIMAHANIM","KFIF MEDAN","1039262707","16","2025-12-16",10000000,18,9,775556,""],["10099946","NURI AFRIANTI","KFIF MEDAN","1039262718","16","2025-12-16",10000000,18,9,775556,""],["10099989","KHULAMSYAH RITONGA","KFIF MEDAN","1028218415","18","2025-12-18",15000000,18,9,1163333,""],["10100023","FAIZI ZUMAR","KFIF MEDAN","1043571423","19","2025-12-19",10000000,12,9,1053333,""],["10100015","DEDY SIHOMBING","KFIF MEDAN","1031777727","19","2025-12-19",10000000,12,9,1053333,""],["10100060","YUSNITA BR SINULINGGA","KFIF MEDAN","1043627755","23","2025-12-23",10000000,18,9,775556,""],["10100089","WAHYU RIFANDI LUBIS","KFIF MEDAN","1043678856","24","2025-12-24",10000000,18,9,775556,""],["10100085","ASLON SIHOTANG","KFIF MEDAN","1037099119","24","2025-12-24",10000000,18,9,775556,""],["10100082","NANI SRI WAHYUNI PULUNGAN","KFIF MEDAN","1043290874","24","2025-12-24",10000000,18,9,775556,""],["10100134","MUHAMMAD SYAHRUDI","KFIF MEDAN","1042705884","5","2026-01-05",10000000,18,5,775556,""],["10100128","WIE MING","KFIF MEDAN","1024596415","5","2026-01-05",13000000,12,9,1369333,""],["10100203","NANDA LESTARI BORU SINAGA","KFIF MEDAN","1041635351","12","2026-01-12",10000000,12,8,1053333,""],["10100250","MANAT SARIFA DESI SIAHAAN","KFIF MEDAN","1042072636","15","2026-01-15",10000000,12,8,1053333,""],["10100301","HAIRUL WAHIT TOBING","KFIF MEDAN","1039546287","20","2026-01-20",10000000,18,8,775556,""],["10100326","BAKTIAR","KFIF MEDAN","1042843519","21","2026-01-21",15000000,24,8,955000,""],["10100346","MUHAMMAD ALFI SYAHRI","KFIF MEDAN","1022741418","22","2026-01-22",10000000,18,8,775556,""],["10100386","ROSMAIDA LUBIS","KFIF MEDAN","1040109273","23","2026-01-23",10000000,18,8,775556,""],["10100391","SISKA DESLI NANDRA ASMITA","KFIF MEDAN","1036915222","23","2026-01-23",20000000,18,8,1551111,""],["10100381","MUHAMMAD CHOLIB","KFIF MEDAN","1041863419","23","2026-01-23",10000000,12,8,1053333,""],["10100384","BUNGA FEBRINA MINARTI SIBARANI","KFIF MEDAN","1044269941","23","2026-01-23",10000000,18,8,775556,""],["10100567","LINA YULIANTI","KFIF MEDAN","1042287567","5","2026-02-05",10000000,12,7,1053333,""],["10100580","FITRI KHAIRANI HASIBUAN","KFIF MEDAN","1044608778","6","2026-02-06",10000000,24,7,636667,""],["10100586","NOFRITA","KFIF MEDAN","1023275496","6","2026-02-06",10000000,12,7,1053333,""],["10100660","ASNIWATI","KFIF MEDAN","1043739324","11","2026-02-11",50000000,12,7,5266667,""],["10100714","ABI KRISTI FIRMANTA PERANGIN ANGIN","KFIF MEDAN","1031958721","13","2026-02-13",50000000,18,7,3877778,""],["10100725","FACHRI ALFAREZY","KFIF MEDAN","1041765937","13","2026-02-13",10000000,12,7,1053333,""],["10100808","ENDANG LELA SARI LUBIS","KFIF MEDAN","1044923536","20","2026-02-20",30000000,24,7,1910000,""],["10100802","ZUCHRANITA SAHAB","KFIF MEDAN","1030587417","20","2026-02-20",15000000,18,7,1163333,""],["10100829","DESI SAPRIANI","KFIF MEDAN","1041643354","23","2026-02-23",10000000,18,7,775556,""],["10100850","JOKO ABDUL RAHMAN","KFIF MEDAN","1028693415","24","2026-02-24",13000000,12,2,1369333,""],["10100870","OFI SAPRINA AMD","KFIF MEDAN","1041355968","25","2026-02-25",15000000,12,7,1580000,""],["10100862","RAHMAD ISNANDA","KFIF MEDAN","1033903525","25","2026-02-25",15000000,12,7,1580000,""],["10100939","NIRMALA DEWI","KFIF MEDAN","1043647845","3","2026-03-03",13000000,18,7,1008222,""],["10100942","PUTRA IRFAN RIZAL HARAHAP","KFIF MEDAN","1043647853","3","2026-03-03",50000000,36,7,2488889,""],["10101000","RIZKY MAULANA","KFIF MEDAN","1044424939","9","2026-03-09",13000000,12,6,1369333,""],["10101035","SISWANTI","KFIF MEDAN","1022976415","11","2026-03-11",13000000,12,6,1369333,""],["10101297","LISTIANA","KFIF MEDAN","1037010711","8","2026-04-08",10000000,18,5,775556,""],["10101322","WINONA AISHKA AULIA","KFIF MEDAN","1041132937","9","2026-04-09",45000000,24,5,2865000,""],["10101381","NURAINI SINAGA","KFIF MEDAN","1046123596","13","2026-04-13",10000000,12,5,1053333,""],["10101373","M TEGAR PRATAMA","KFIF MEDAN","1037505486","13","2026-04-13",10000000,12,5,1053333,""],["10101443","LAURENSIUS TEWANAIN","KFIF MEDAN","1045541467","16","2026-04-16",20000000,18,5,1551111,""],["10101458","EKO KURNIAWAN","KFIF MEDAN","1046238245","17","2026-04-17",25000000,12,5,2633333,""],["10101488","ADE KUMARA","KFIF MEDAN","1046204065","20","2026-04-20",10000000,12,5,1053333,""],["10101509","SYAHRUL","KFIF MEDAN","1044451944","21","2026-04-21",30000000,18,5,2326667,""],["10101532","SOFIAN","KFIF MEDAN","1040528756","22","2026-04-22",30000000,18,5,2326667,""],["10101529","DATIVA LUSIA SEMBIRING","KFIF MEDAN","1045131676","22","2026-04-22",30000000,18,5,2326667,""],["10101574","LUSTRI SIBURIAN","KFIF MEDAN","1045296942","24","2026-04-24",20000000,18,5,1551111,""],["10101576","KARTINI HARAHAP","KFIF MEDAN","1039971697","24","2026-04-24",30000000,12,5,3160000,""],["10101674","HOTTUA ISRA FERNANDES SIMANULLANG","KFIF MEDAN","1045131757","4","2026-05-04",10000000,12,5,1053333,""],["10101711","NIMPAN BR GINTING","KFIF MEDAN","1025615518","6","2026-05-06",15000000,24,4,955000,""],["10101764","ANITA","KFIF MEDAN","1036836039","8","2026-05-08",10000000,12,4,1053333,""],["10101791","EVI FLORA SIMANGUNSONG","KFIF MEDAN","1046461378","11","2026-05-11",10000000,12,4,1053333,""],["10101784","RAHMAWATI","KFIF MEDAN","1046483436","11","2026-05-11",10000000,12,4,1053333,""],["10038357","SILVIA DEAH ANGGRAINI","KFIF MEDAN","1045462974","13","2026-05-13",15000000,18,4,1163333,""],["10101859","SAWITRI HOTMAIDA MANIK","KFIF MEDAN","1036037993","18","2026-05-18",10000000,12,4,1053333,""],["10101987","SUSILAWATI","KFIF MEDAN","1027894425","19","2026-05-19",20000000,18,4,1551111,""],["10102003","RUT CAHYANA WAU","KFIF MEDAN","1024109417","20","2026-05-20",25000000,24,2,1591667,""],["10102011","NOPA NOVITA","KFIF MEDAN","1043141108","20","2026-05-20",15000000,12,4,1580000,""],["10102035","MUTIA SINGGI RUKMANA","KFIF MEDAN","1044900428","21","2026-05-21",10000000,12,4,1053333,""],["10102032","ERWIN SIHOMBING","KFIF MEDAN","1047066421","21","2026-05-21",10000000,12,4,1053333,""],["10102058","PUTRI INDAHYANI","KFIF MEDAN","1046562816","22","2026-05-22",20000000,18,4,1551111,""],["10102053","MUHAMMAD AGUSTIAWAN","KFIF MEDAN","1033523398","22","2026-05-22",15000000,24,4,955000,""],["10102122","INOKI KABAN","KFIF MEDAN","1029220464","25","2026-05-25",15000000,18,4,1163333,""],["10102116","DEWI TRI MAYASARI","KFIF MEDAN","1046562891","25","2026-05-25",35000000,36,4,1742222,""],["10102119","NUR ILHAM","KFIF MEDAN","1044510247","25","2026-05-25",15000000,18,4,1163333,""],["10102283","DAMERIA SIDABARIBA","KFIF MEDAN","1041454397","8","2026-06-08",15000000,12,3,1580000,""],["10102284","WAHYU ANDHIKA PERDANA","KFIF MEDAN","1047472551","9","2026-06-09",50000000,12,3,5266667,""],["10102341","SILVIA OKTARI BR SEMBIRING","KFIF MEDAN","1040457368","10","2026-06-10",10000000,12,3,1053333,""],["10102567","FEBRI HENNY","KFIF MEDAN","1046625184","18","2026-06-18",30000000,24,3,1910000,""],["10102616","SITI MARWIYAH","KFIF MEDAN","1047830482","22","2026-06-22",20000000,18,3,1551111,""],["10102612","SEPTELINA SORTA SIAHAAN","KFIF MEDAN","1021352458","22","2026-06-22",25000000,24,3,1591667,""],["10102902","DESMANELI","KFIF MEDAN","1042713917","3","2026-07-03",30000000,24,3,1910000,""],["10102973","ADRIANSYAH","KFIF MEDAN","1042515813","8","2026-07-08",10000000,12,2,1053333,""],["10102985","ARBIE SETIAWAN","KFIF MEDAN","1048384303","8","2026-07-08",10000000,12,2,1053333,""],["10102980","BUDIONO","KFIF MEDAN","1041259667","8","2026-07-08",20000000,18,2,1551111,""],["10103015","RUDI HARTONO SEMBIRING SPD","KFIF MEDAN","1042408162","9","2026-07-09",20000000,18,2,1551111,""],["10103096","TSANNA TSURAYYA","KFIF MEDAN","1043440628","13","2026-07-13",15000000,12,2,1580000,""],["10103111","SYAHRUN MUSTAQIM","KFIF MEDAN","1047190057","13","2026-07-13",20000000,18,2,1551111,""],["10103118","ANNISA MEDINA","KFIF MEDAN","1044383698","13","2026-07-13",20000000,18,2,1551111,""],["10103319","HERMAN","KFIF MEDAN","1048640709","16","2026-07-16",20000000,18,2,1551111,""],["10103311","FITRI HANDAYANI HUTAPEA","KFIF MEDAN","1043440655","16","2026-07-16",10000000,12,2,1053333,""],["10103328","DINA FITRIANA LUBIS","KFIF MEDAN","1047654684","16","2026-07-16",15000000,18,2,1163333,""],["10103413","LEO ANDHIKA MAKARO PURBA","KFIF MEDAN","1039939521","21","2026-07-21",20000000,24,2,1273333,""],["10103418","RAHMAD FIKRI","KFIF MEDAN","1048791243","21","2026-07-21",13000000,12,2,1369333,""],["10103498","RIDHO MELSKY","KFIF MEDAN","1041140988","22","2026-07-22",25000000,24,2,1591667,""],["10103530","PUTRO HADI SUCIPTO","KFIF MEDAN","1028145458","23","2026-07-23",30000000,18,2,2326667,""],["10103566","FATHI MAHARANI","KFIF MEDAN","1045344122","24","2026-07-24",30000000,24,2,1910000,""],["10103854","OZI KASA PUTRA","KFIF MEDAN","1037149434","4","2026-08-04",20000000,18,2,1551111,""],["10103925","SARINDI","KFIF MEDAN","1041203451","5","2026-08-05",30000000,18,2,2326667,""],["10103980","PARIANA SARI","KFIF MEDAN","1033771904","6","2026-08-06",20000000,18,2,1551111,""],["10103966","SUWANTO","KFIF MEDAN","1025968413","6","2026-08-06",25000000,18,2,1938889,""],["10103962","SATHYERAY","KFIF MEDAN","1025412636","6","2026-08-06",30000000,24,2,1910000,""],["10104130","ERNITA SIAHAAN","KFIF MEDAN","1027057434","11","2026-08-11",20000000,18,1,1551111,""],["10104135","AWAL PUTRA","KFIF MEDAN","1045845121","11","2026-08-11",25000000,24,1,1591667,""],["10104250","EKA SUSANTI SEMBIRING","KFIF MEDAN","1028898505","14","2026-08-14",15000000,12,1,1580000,""],["10104267","LITWINA MONIKA BR TARIGAN","KFIF MEDAN","1028440452","14","2026-08-14",10000000,12,1,1053333,""],["10104292","WIKE WINDARI","KFIF MEDAN","1049347258","18","2026-08-18",30000000,24,1,1910000,""],["10104398","SANIAH","KFIF MEDAN","1041669515","20","2026-08-20",25000000,24,1,1591667,""],["10104420","RUDIANTO SIMAREMARE","KFIF MEDAN","1034610114","21","2026-08-21",30000000,12,1,3160000,""],["10104493","MUHAMMAD BAYU SEGORO","KFIF MEDAN","1035949565","24","2026-08-24",30000000,24,1,1910000,""],["10104774","SYAFRI WALDI","KFIF MEDAN","1050197731","3","2026-09-03",30000000,18,1,2326667,""],["10104882","TUTI MARTOPO","KFIF MEDAN","1036817131","7","2026-09-07",20000000,18,0,1551111,""],["10104932","SEPTIAN MAHYUDI LUBIS","KFIF MEDAN","1046783887","8","2026-09-08",30000000,24,0,1910000,""],["10104929","RISKI FADILLAH","KFIF MEDAN","1032893887","8","2026-09-08",15000000,12,0,1580000,""],["10105033","SOFIAH","KFIF MEDAN","1050483327","10","2026-09-10",30000000,24,0,1910000,""],["10105136","DINA YUNITA ARITONANG","KFIF MEDAN","1048451698","14","2026-09-14",15000000,12,0,1580000,""],["10105170","MUHAMMAD NAZIR PULUNGAN","KFIF MEDAN","1047460518","15","2026-09-15",20000000,18,0,1551111,""],["10105263","DWI IVAN HARRIS","KFIF MEDAN","1042917008","17","2026-09-17",30000000,18,0,2326667,""],["10105268","KARISMAN GULO","KFIF MEDAN","1046024016","17","2026-09-17",10000000,12,0,1053333,""],["10105401","LENI MARLINA SIREGAR","KFIF MEDAN","1046113612","21","2026-09-21",30000000,24,0,1910000,""],["10101152","MULIANTO","KFIF MEDAN","1045620847","22","2026-09-22",30000000,24,0,1910000,""],["10105453","HENI SUKANTI","KFIF MEDAN","1032383854","23","2026-09-23",20000000,24,0,1273333,""],["10105576","DESIMANI","KFIF MEDAN","1044110217","25","2026-09-25",30000000,18,0,2326667,""],["10105586","PARLINDUNGAN SIAGIAN","KFIF MEDAN","1028617425","25","2026-09-25",30000000,12,0,3160000,""]];
+        
+        const defaultExcelData = compressedData.map((d, index) => ({
+            internalId: `UID-EXCEL-${index}`,
+            cif: d[0], name: d[1], alamat: d[2], noRek: d[3], 
+            jatuhTempo: isNaN(d[4]) ? d[4] : `Tgl ${d[4]}`, 
+            tanggalAkad: d[5],
+            plafon: d[6], tenor: d[7], angsuranTerbayar: d[8], angsuranPerBulan: d[9],
+            noHp: d[10] || "",
+            namaIfo: ifoList[index % 4],
+            janjiBayar: "",
+            tunggakan1: 0, tunggakan2: 0, tunggakan3: 0, tunggakanLebih3: 0, statusTunggakan: 0, kolektibilitas: 1
+        }));
+
+        const formatRupiah = (number) => {
+            return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(number);
+        };
+        const formatDate = (dateString) => {
+            if(!dateString) return "-";
+            const options = { year: 'numeric', month: 'short', day: 'numeric' };
+            return new Date(dateString).toLocaleDateString('id-ID', options);
+        };
+
+        function App() {
+            const [portfolio, setPortfolio] = useState(() => {
+                const savedData = localStorage.getItem('data_portofolio_btpn_v25_data_nasabah_ews_final');
+                if (savedData) return JSON.parse(savedData);
+                return defaultExcelData;
+            });
+            
+            const [searchTerm, setSearchTerm] = useState('');
+            const [currentPage, setCurrentPage] = useState(1);
+            const itemsPerPage = 15;
+
+            const [editingId, setEditingId] = useState(null);
+            const [tempCif, setTempCif] = useState("");
+
+            const [editingStatusId, setEditingStatusId] = useState(null);
+            const [tempStatus, setTempStatus] = useState("0");
+
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [isEwsModalOpen, setIsEwsModalOpen] = useState(false);
+            const [isExportingImage, setIsExportingImage] = useState(false);
+            const [isPrintMode, setIsPrintMode] = useState(false);
+            
+            const ewsTableRef = useRef(null);
+
+            const [formData, setFormData] = useState({
+                cif: '', name: '', alamat: '', noHp: '', namaIfo: 'Agung', noRek: '', jatuhTempo: '', tanggalAkad: '', 
+                plafon: '', tenor: '', angsuranTerbayar: '0', angsuranPerBulan: '', 
+                tunggakan1: '0', tunggakan2: '0', tunggakan3: '0', tunggakanLebih3: '0', kolektibilitas: '1'
+            });
+
+            useEffect(() => { localStorage.setItem('data_portofolio_btpn_v25_data_nasabah_ews_final', JSON.stringify(portfolio)); }, [portfolio]);
+
+            const ewsCombinedList = useMemo(() => {
+                const today = new Date();
+                const currentDay = today.getDate();
+                const currentMonth = today.getMonth();
+                const currentYear = today.getFullYear();
+                const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+                return portfolio.map(client => {
+                    const dueDay = parseInt(client.jatuhTempo.replace(/\D/g, ''));
+                    if (isNaN(dueDay)) return null;
+
+                    let isMenunggak = client.kolektibilitas > 1 || client.statusTunggakan > 0;
+                    let dpd = calculateDPD(client.jatuhTempo, client.statusTunggakan);
+                    
+                    let diff = dueDay - currentDay;
+                    if (diff < 0 && (diff + daysInMonth >= 0 && diff + daysInMonth <= 3)) {
+                        diff = diff + daysInMonth;
+                    }
+
+                    let isH3 = !isMenunggak && (diff >= 0 && diff <= 3);
+
+                    if (isMenunggak || isH3) {
+                        let sortValue = isMenunggak ? -dpd : diff;
+                        return { ...client, isMenunggak, dpd, daysUntilDue: diff, sortValue };
+                    }
+                    return null;
+                }).filter(Boolean).sort((a, b) => a.sortValue - b.sortValue);
+            }, [portfolio]);
+
+            const filteredPortfolio = useMemo(() => {
+                return portfolio.filter(client => 
+                    client.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                    client.cif.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (client.noHp && client.noHp.toLowerCase().includes(searchTerm.toLowerCase()))
+                );
+            }, [portfolio, searchTerm]);
+
+            const paginatedPortfolio = filteredPortfolio.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+            const totalPages = Math.ceil(filteredPortfolio.length / itemsPerPage);
+
+            const stats = useMemo(() => {
+                let totalPlafon = 0, totalBakiDebet = 0;
+                portfolio.forEach(p => {
+                    const bakiDebetAktual = hitungBakiDebet(p.plafon, p.tenor, p.angsuranTerbayar, p.angsuranPerBulan);
+                    totalPlafon += p.plafon; totalBakiDebet += bakiDebetAktual;
+                });
+                return { totalPlafon, totalBakiDebet, totalDebitur: portfolio.length };
+            }, [portfolio]);
+
+            const saveCif = (internalId) => { setPortfolio(prev => prev.map(p => p.internalId === internalId ? { ...p, cif: tempCif } : p)); setEditingId(null); };
+            const updateIfo = (id, newIfo) => { setPortfolio(prev => prev.map(p => p.internalId === id ? { ...p, namaIfo: newIfo } : p)); };
+            const updateJanjiBayar = (id, newDate) => { setPortfolio(prev => prev.map(p => p.internalId === id ? { ...p, janjiBayar: newDate } : p)); };
+            
+            const saveStatus = (internalId) => { 
+                setPortfolio(prev => prev.map(p => {
+                    if (p.internalId === internalId) {
+                        const newStatus = Number(tempStatus);
+                        let newKol = 1, t1 = 0, t2 = 0, t3 = 0, t4 = 0;
+                        if (newStatus === 1) { newKol = 2; t1 = p.angsuranPerBulan; }
+                        else if (newStatus === 2) { newKol = 2; t1 = p.angsuranPerBulan; t2 = p.angsuranPerBulan; }
+                        else if (newStatus === 3) { newKol = 3; t1 = p.angsuranPerBulan; t2 = p.angsuranPerBulan; t3 = p.angsuranPerBulan; }
+                        else if (newStatus === 4) { newKol = 5; t1 = p.angsuranPerBulan; t2 = p.angsuranPerBulan; t3 = p.angsuranPerBulan; t4 = p.angsuranPerBulan * 2; }
+                        return { ...p, statusTunggakan: newStatus, kolektibilitas: newKol, tunggakan1: t1, tunggakan2: t2, tunggakan3: t3, tunggakanLebih3: t4 };
+                    }
+                    return p;
+                })); 
+                setEditingStatusId(null); 
+            };
+
+            const deleteCustomer = (id, name) => { if (window.confirm(`Hapus data nasabah: ${name}?`)) { setPortfolio(prev => prev.filter(p => p.internalId !== id)); } };
+            
+            const updateAngsuranTerbayar = (id, delta) => {
+                setPortfolio(prev => prev.map(p => {
+                    if (p.internalId === id) {
+                        const newAngsuranTerbayar = Number(p.angsuranTerbayar) + delta;
+                        if (newAngsuranTerbayar >= 0 && newAngsuranTerbayar <= Number(p.tenor)) {
+                            return { ...p, angsuranTerbayar: newAngsuranTerbayar };
+                        }
+                    }
+                    return p;
+                }));
+            };
+
+            const handleInputChange = (e) => { const { name, value } = e.target; setFormData(prev => ({ ...prev, [name]: value })); };
+            const handleAddSubmit = (e) => {
+                e.preventDefault();
+                let statusTunggakan = 0;
+                if (Number(formData.tunggakanLebih3) > 0) statusTunggakan = 4;
+                else if (Number(formData.tunggakan3) > 0) statusTunggakan = 3;
+                else if (Number(formData.tunggakan2) > 0) statusTunggakan = 2;
+                else if (Number(formData.tunggakan1) > 0) statusTunggakan = 1;
+
+                const newCustomer = {
+                    internalId: `UID-${Date.now()}`, cif: formData.cif || `CIF-NEW${Math.floor(Math.random() * 999)}`,
+                    name: formData.name, alamat: formData.alamat, noHp: formData.noHp, namaIfo: formData.namaIfo, noRek: formData.noRek, jatuhTempo: formData.jatuhTempo, 
+                    tanggalAkad: formData.tanggalAkad, plafon: Number(formData.plafon) || 0, tenor: Number(formData.tenor) || 1, 
+                    angsuranTerbayar: Number(formData.angsuranTerbayar) || 0, angsuranPerBulan: Number(formData.angsuranPerBulan) || 0,
+                    tunggakan1: Number(formData.tunggakan1) || 0, tunggakan2: Number(formData.tunggakan2) || 0, tunggakan3: Number(formData.tunggakan3) || 0, tunggakanLebih3: Number(formData.tunggakanLebih3) || 0,
+                    statusTunggakan: statusTunggakan, kolektibilitas: Number(formData.kolektibilitas), janjiBayar: ""
+                };
+                setPortfolio([newCustomer, ...portfolio]); setIsModalOpen(false); setCurrentPage(1);
+                setFormData({ cif: '', name: '', alamat: '', noHp: '', namaIfo: 'Agung', noRek: '', jatuhTempo: '', tanggalAkad: '', plafon: '', tenor: '', angsuranTerbayar: '0', angsuranPerBulan: '', tunggakan1: '0', tunggakan2: '0', tunggakan3: '0', tunggakanLebih3: '0', kolektibilitas: '1' });
+            };
+
+            const exportToExcel = () => {
+                const dataToExport = portfolio.map((client, index) => {
+                    const bakiDebetAktual = hitungBakiDebet(client.plafon, client.tenor, client.angsuranTerbayar, client.angsuranPerBulan);
+                    let statusName = "Lancar";
+                    if (client.statusTunggakan === 1) statusName = "Nunggak 1 Bulan"; else if (client.statusTunggakan === 2) statusName = "Nunggak 2 Bulan";
+                    else if (client.statusTunggakan === 3) statusName = "Nunggak 3 Bulan"; else if (client.statusTunggakan === 4) statusName = "Nunggak >3 Bulan";
+
+                    return {
+                        "No": index + 1, "No. CIF": client.cif, "Nama Nasabah": client.name, "No. HP": client.noHp, "Alamat": client.alamat, 
+                        "Nama IFO": client.namaIfo || "-", "No. Rekening": client.noRek,
+                        "Tanggal Akad": formatDate(client.tanggalAkad), "Tanggal Jatuh Tempo": client.jatuhTempo, "Plafon (Rp)": client.plafon,
+                        "Tenor (Bulan)": client.tenor, "Angsuran Terbayar (Bulan)": client.angsuranTerbayar, "Angsuran per Bulan (Rp)": client.angsuranPerBulan,
+                        "Baki Debet / OS (Rp)": bakiDebetAktual, "Kolektibilitas (Kol)": client.kolektibilitas, "Status Tunggakan": statusName,
+                        "DPD (Hari Tunggakan)": calculateDPD(client.jatuhTempo, client.statusTunggakan),
+                        "Tanggal Janji Bayar": client.janjiBayar ? formatDate(client.janjiBayar) : "-"
+                    };
+                });
+                const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Data Portofolio");
+                XLSX.writeFile(workbook, "Laporan_Portofolio_Nasabah.xlsx");
+            };
+
+            const exportEwsAsImage = async () => {
+                if (!ewsTableRef.current) return;
+                setIsExportingImage(true);
+                setIsPrintMode(true); 
+                
+                setTimeout(async () => {
+                    try {
+                        const canvas = await html2canvas(ewsTableRef.current, {
+                            scale: 3, 
+                            useCORS: true,
+                            backgroundColor: '#ffffff',
+                            logging: false
+                        });
+                        const imageURL = canvas.toDataURL('image/png', 1.0);
+                        const downloadLink = document.createElement('a');
+                        downloadLink.href = imageURL;
+                        downloadLink.download = `Laporan_EWS_BTPN_Syariah_${new Date().toISOString().slice(0, 10)}.png`;
+                        downloadLink.click();
+                    } catch (err) {
+                        alert("Gagal mengexport gambar: " + err.message);
+                    } finally {
+                        setIsPrintMode(false); 
+                        setIsExportingImage(false);
+                    }
+                }, 300);
+            };
+
+            const getOsColor = (status) => {
+                if(status === 0) return "text-emerald-600"; if(status === 1) return "text-amber-500";
+                if(status === 2) return "text-orange-500"; if(status === 3) return "text-rose-500"; return "text-red-700";
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col relative">
+                    <header className="bg-white shadow-md border-b-4 border-orange-500 relative z-10">
+                        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center space-x-6">
+                            <img src="https://upload.wikimedia.org/wikipedia/commons/4/42/BTPN_Syariah_logo.svg" alt="Logo BTPN Syariah" className="h-14 object-contain" onError={(e)=>{ e.target.style.display='none'; e.target.nextSibling.style.display='block'; }} />
+                            <div style={{display: 'none'}} className="text-3xl font-black text-orange-600 tracking-tighter uppercase">BTPN Syariah</div>
+                            <div className="border-l-2 border-slate-300 pl-6 py-1">
+                                <h1 className="text-xl font-bold text-slate-800 tracking-tight uppercase">Monitoring Portofolio Kredit</h1>
+                                <p className="text-slate-500 text-sm font-semibold tracking-wide">Pembiayaan Prasejahtera (Tepat) - Anuitas Efektif</p>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="flex-grow max-w-7xl mx-auto px-4 mt-6 w-full pb-10">
+                        <div className="mb-6 space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="bg-blue-600 rounded-xl p-5 text-white shadow flex flex-col justify-center">
+                                    <p className="text-blue-100 text-xs font-bold uppercase mb-1">Total Plafond Keseluruhan</p>
+                                    <h3 className="text-2xl font-black">{formatRupiah(stats.totalPlafon)}</h3>
+                                </div>
+                                <div className="bg-slate-800 rounded-xl p-5 text-white shadow flex flex-col justify-center">
+                                    <p className="text-slate-300 text-xs font-bold uppercase mb-1">Sisa Baki Total Debet (Efektif)</p>
+                                    <h3 className="text-2xl font-black">{formatRupiah(stats.totalBakiDebet)}</h3>
+                                </div>
+                                <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-center justify-between">
+                                    <div>
+                                        <p className="text-slate-500 text-xs font-bold uppercase mb-1">Jumlah Debitur Total</p>
+                                        <h3 className="text-3xl font-black text-slate-800">{stats.totalDebitur} <span className="text-sm font-medium text-slate-500">Orang</span></h3>
+                                    </div>
+                                    <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xl"><i className="fas fa-users"></i></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-xl shadow-sm border p-4 mb-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                            <div className="flex-1 w-full relative">
+                                <i className="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400"></i>
+                                <input type="text" placeholder="Cari CIF, Nama, atau No. Rekening..." className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-orange-500 text-sm font-medium" value={searchTerm} onChange={(e) => {setSearchTerm(e.target.value); setCurrentPage(1);}} />
+                            </div>
+                            
+                            <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-3 w-full sm:w-auto">
+                                <button onClick={() => setIsEwsModalOpen(true)} className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white px-5 py-2.5 rounded-lg font-bold text-sm shadow-sm flex items-center justify-center transition-colors relative">
+                                    <i className="fas fa-bell mr-2"></i> Dashboard EWS
+                                    {ewsCombinedList.length > 0 && (
+                                        <span className="absolute -top-2 -right-2 bg-yellow-400 text-slate-900 text-xs font-black px-2 py-0.5 rounded-full shadow border-2 border-white animate-bounce">
+                                            {ewsCombinedList.length}
+                                        </span>
+                                    )}
+                                </button>
+                                <button onClick={exportToExcel} className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg font-bold text-sm shadow-sm flex items-center justify-center transition-colors">
+                                    <i className="fas fa-file-excel mr-2"></i> Export Excel
+                                </button>
+                                <button onClick={() => setIsModalOpen(true)} className="w-full sm:w-auto bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-lg font-bold text-sm shadow-sm flex items-center justify-center transition-colors">
+                                    <i className="fas fa-plus mr-2"></i> Tambah Nasabah
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="bg-white shadow-sm border rounded-xl overflow-hidden mb-6">
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-slate-200">
+                                    <thead className="bg-slate-50 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                        <tr>
+                                            <th className="px-4 py-4">No. CIF & Tgl Akad</th>
+                                            <th className="px-4 py-4">Nasabah, IFO & Alamat</th>
+                                            <th className="px-4 py-4">Fasilitas & Pembayaran</th>
+                                            <th className="px-4 py-4">Baki Debet (OS Efektif)</th>
+                                            <th className="px-4 py-4">Tunggakan & Kol</th>
+                                            <th className="px-4 py-4 text-center"><i className="fas fa-cog"></i></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {paginatedPortfolio.length > 0 ? paginatedPortfolio.map((client) => {
+                                            const bakiDebetAktual = hitungBakiDebet(client.plafon, client.tenor, client.angsuranTerbayar, client.angsuranPerBulan);
+                                            
+                                            return (
+                                            <tr key={client.internalId} className="hover:bg-orange-50 transition-colors text-sm">
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    {editingId === client.internalId ? (
+                                                        <div className="flex items-center space-x-1 mb-1">
+                                                            <input type="text" value={tempCif} onChange={(e) => setTempCif(e.target.value)} className="border-2 border-orange-400 rounded px-2 py-1 w-24 text-xs outline-none font-bold" autoFocus />
+                                                            <button onClick={() => saveCif(client.internalId)} className="text-emerald-500 hover:text-emerald-700 bg-emerald-100 p-1 rounded"><i className="fas fa-check"></i></button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex items-center space-x-2 group mb-1">
+                                                            <span className="font-bold text-slate-700">{client.cif}</span>
+                                                            <button onClick={() => { setEditingId(client.internalId); setTempCif(client.cif); }} className="text-slate-300 hover:text-orange-500 opacity-0 group-hover:opacity-100 transition-opacity"><i className="fas fa-pen text-xs"></i></button>
+                                                        </div>
+                                                    )}
+                                                    <div className="text-xs text-slate-500 mt-1"><i className="far fa-handshake text-orange-400 mr-1"></i>Akad: <span className="font-semibold">{formatDate(client.tanggalAkad)}</span></div>
+                                                    <div className="text-xs text-slate-500 mt-0.5"><i className="far fa-calendar-alt text-orange-400 mr-1"></i>JT: <span className="font-semibold text-rose-600">{client.jatuhTempo}</span></div>
+                                                    <div className="text-xs text-slate-500 mt-0.5">Rek: <span className="font-semibold">{client.noRek}</span></div>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <div className="font-bold text-slate-900 text-sm">{client.name}</div>
+                                                    <div className="flex items-center space-x-3 mt-1">
+                                                        <div className="text-xs text-slate-600 font-bold flex items-center">
+                                                            <i className="fas fa-user-tie text-blue-500 mr-1"></i> {client.namaIfo || '-'}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-xs text-slate-500 mt-1 max-w-[150px] truncate"><i className="fas fa-map-marker-alt text-orange-400 mr-1"></i>{client.alamat}</div>
+                                                </td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <div className="text-xs text-slate-500 font-medium">Plf: <span className="font-bold text-slate-700">{formatRupiah(client.plafon)}</span></div>
+                                                    <div className="text-xs text-slate-500 font-medium mt-0.5">Tenor: <span className="font-bold text-slate-700">{client.tenor} Bln</span></div>
+                                                    
+                                                    <div className="text-xs text-slate-500 font-medium mt-1 flex items-center space-x-1">
+                                                        <span>Sdh Bayar:</span> 
+                                                        <span className="font-bold text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded">{client.angsuranTerbayar} x</span>
+                                                        <div className="inline-flex space-x-0.5 ml-1">
+                                                            {client.angsuranTerbayar > 0 && (
+                                                                <button onClick={() => updateAngsuranTerbayar(client.internalId, -1)} title="Kurangi 1 Bulan" className="bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded text-[10px] hover:bg-rose-200 transition-colors font-bold">-</button>
+                                                            )}
+                                                            {client.angsuranTerbayar < client.tenor && (
+                                                                <button onClick={() => updateAngsuranTerbayar(client.internalId, 1)} title="Tambah 1 Bulan Terbayar" className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-[10px] hover:bg-emerald-200 transition-colors font-bold">+</button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-xs font-bold text-orange-600 mt-1 bg-orange-100 inline-block px-1.5 py-0.5 rounded">Rp {formatRupiah(client.angsuranPerBulan)} /bln</div>
+                                                </td>
+                                                <td className="px-4 py-3 whitespace-nowrap align-top">
+                                                    <div className="font-black text-emerald-700 text-base">{formatRupiah(bakiDebetAktual)}</div>
+                                                    {bakiDebetAktual === 0 && <div className="text-[10px] font-bold text-emerald-500 mt-1 bg-emerald-50 inline-block px-2 py-0.5 rounded-full border border-emerald-200">LUNAS</div>}
+                                                </td>
+                                                <td className="px-4 py-3 text-xs">
+                                                    <div className="flex items-center space-x-2 mb-2 group">
+                                                        <span className={`px-2 py-0.5 inline-flex text-xs font-bold rounded shadow-sm kol-${client.kolektibilitas}`}>Kol {client.kolektibilitas}</span>
+                                                        {editingStatusId === client.internalId ? (
+                                                            <div className="flex items-center space-x-1">
+                                                                <select value={tempStatus} onChange={(e) => setTempStatus(e.target.value)} className="border-2 border-orange-400 rounded px-1 py-0.5 text-xs outline-none font-bold bg-white h-6">
+                                                                    <option value="0">Lancar</option>
+                                                                    <option value="1">1 Bulan</option>
+                                                                    <option value="2">2 Bulan</option>
+                                                                    <option value="3">3 Bulan</option>
+                                                                    <option value="4">&gt;3 Bulan</option>
+                                                                </select>
+                                                                <button onClick={() => saveStatus(client.internalId)} className="text-emerald-500 hover:text-emerald-700 bg-emerald-100 p-1 rounded"><i className="fas fa-check"></i></button>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex items-center space-x-1">
+                                                                <span className={`font-bold ${getOsColor(client.statusTunggakan)}`}>
+                                                                    {client.statusTunggakan === 0 ? "Lancar" : client.statusTunggakan === 4 ? ">3 Bulan" : `${client.statusTunggakan} Bulan`}
+                                                                </span>
+                                                                <button onClick={() => { setEditingStatusId(client.internalId); setTempStatus(client.statusTunggakan.toString()); }} className="text-slate-300 hover:text-orange-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                    <i className="fas fa-pen text-xs"></i>
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-center align-middle">
+                                                    <button onClick={() => deleteCustomer(client.internalId, client.name)} className="text-rose-400 hover:text-white hover:bg-rose-500 w-8 h-8 rounded-full transition-colors flex items-center justify-center mx-auto shadow-sm border border-transparent hover:border-rose-600"><i className="fas fa-trash-alt text-xs"></i></button>
+                                                </td>
+                                            </tr>
+                                        );
+                                        }) : (
+                                            <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 font-medium">Data tidak ditemukan.</td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <div className="bg-slate-50 px-4 py-3 border-t flex justify-between items-center text-sm">
+                                <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} className="px-4 py-1.5 bg-white border border-slate-200 rounded-md disabled:opacity-50 font-bold text-slate-600 hover:bg-slate-100">Sebelumnya</button>
+                                <span className="font-bold text-slate-500 bg-white px-4 py-1.5 rounded-full border shadow-inner">Halaman {currentPage} dari {totalPages || 1}</span>
+                                <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages || totalPages === 0} className="px-4 py-1.5 bg-white border border-slate-200 rounded-md disabled:opacity-50 font-bold text-slate-600 hover:bg-slate-100">Selanjutnya</button>
+                            </div>
+                        </div>
+                    </main>
+
+                    <footer className="mt-auto bg-slate-900 text-white py-8 text-center border-t-8 border-orange-500">
+                        <div className="max-w-7xl mx-auto px-4 flex flex-col items-center justify-center space-y-2">
+                            <p className="text-sm font-semibold tracking-wide text-slate-400 uppercase">
+                                <i className="fas fa-shield-alt mr-2 text-orange-500"></i> Sistem Monitoring Portofolio Kredit Eksklusif
+                            </p>
+                            <p className="text-base font-bold text-slate-300">
+                                &copy; Hak Cipta 2026 - BTPN Syariah. Seluruh Hak Dilindungi.
+                            </p>
+                            <div className="mt-4 inline-block bg-slate-800 border border-slate-700 rounded-lg px-6 py-3 shadow-lg">
+                                <p className="text-sm text-slate-400 mb-1">Aplikasi ini dirancang dan dibuat oleh:</p>
+                                <p className="text-2xl font-black text-orange-400 tracking-widest uppercase" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>
+                                    <i className="fas fa-code mr-2 text-slate-500"></i> TOHA AMI JAYA
+                                </p>
+                            </div>
+                        </div>
+                    </footer>
+
+                    {/* MODAL EWS */}
+                    {isEwsModalOpen && (
+                        <div className="fixed inset-0 bg-slate-900 bg-opacity-75 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+                            <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden modal-animate border-2 border-rose-500 flex flex-col max-h-[90vh]">
+                                <div className="bg-rose-600 text-white px-5 py-4 flex justify-between items-center shadow relative z-10">
+                                    <h2 className="text-lg font-bold"><i className="fas fa-bell mr-2 animate-bounce"></i>Early Warning System (EWS)</h2>
+                                    <div className="flex items-center space-x-2">
+                                        <button onClick={exportEwsAsImage} disabled={isExportingImage} className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded shadow flex items-center transition-colors">
+                                            <i className={`fas ${isExportingImage ? 'fa-spinner fa-spin' : 'fa-camera'} mr-1.5`}></i> {isExportingImage ? 'Memproses HD...' : 'Export Foto HD'}
+                                        </button>
+                                        <button onClick={() => setIsEwsModalOpen(false)} className="text-white hover:text-rose-200 transition-colors ml-2"><i className="fas fa-times text-xl"></i></button>
+                                    </div>
+                                </div>
+                                
+                                <div className="p-5 overflow-y-auto bg-slate-50 flex-grow">
+                                    <div className="mb-4 bg-orange-50 border border-orange-200 text-orange-800 p-3 rounded-lg text-sm flex items-start">
+                                        <i className="fas fa-exclamation-triangle mt-0.5 mr-2 text-orange-600 text-lg"></i>
+                                        <p>Tekan tombol hijau '✅ Bayar' di baris angsuran jika nasabah telah melunasi setoran, atau isi Tanggal Janji Bayar untuk menjadwalkan ulang penagihan.</p>
+                                    </div>
+                                    
+                                    <div ref={ewsTableRef} className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden p-2">
+                                        <div className="px-4 py-3 border-b bg-slate-100 flex justify-between items-center">
+                                            <div>
+                                                <h3 className="font-bold text-slate-800 text-sm">LAPORAN MONITORING EWS & PEMBAYARAN</h3>
+                                                <p className="text-xs text-slate-500">BTPN Syariah - Area Medan | Tanggal Cetak: {new Date().toLocaleDateString('id-ID', {year:'numeric', month:'long', day:'numeric'})}</p>
+                                            </div>
+                                            <div className="text-right text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1 rounded border border-rose-200">
+                                                Total Dipantau: {ewsCombinedList.length} Nasabah
+                                            </div>
+                                        </div>
+                                        <table className="min-w-full divide-y divide-slate-200">
+                                            <thead className="bg-slate-50 text-left text-xs font-bold text-slate-600 uppercase">
+                                                <tr>
+                                                    <th className="px-4 py-3 w-1/4">Nasabah & No. Rekening</th>
+                                                    <th className="px-4 py-3 text-center">IFO Pengelola</th>
+                                                    <th className="px-4 py-3 text-center">Status EWS & Jatuh Tempo</th>
+                                                    <th className="px-4 py-3 text-center">Jumlah Angsuran & Bayar</th>
+                                                    <th className="px-4 py-3 text-center">Tanggal Janji Bayar</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 text-sm">
+                                                {ewsCombinedList.length > 0 ? ewsCombinedList.map(client => {
+                                                    const isLunasBulanIni = client.angsuranTerbayar >= client.tenor;
+                                                    return (
+                                                        <tr key={`ews-cb-${client.internalId}`} className="hover:bg-slate-50 transition-colors">
+                                                            <td className="px-4 py-3">
+                                                                <div className="font-bold text-slate-800">{client.name}</div>
+                                                                <div className="text-xs text-slate-500 font-semibold mt-1"><i className="fas fa-credit-card text-emerald-500 mr-1"></i> Rek: {client.noRek || '-'}</div>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-center align-middle">
+                                                                {isPrintMode ? (
+                                                                    <div className="font-bold text-slate-800 text-sm">{client.namaIfo || "Agung"}</div>
+                                                                ) : (
+                                                                    <select value={client.namaIfo || "Agung"} onChange={(e) => updateIfo(client.internalId, e.target.value)} className="border border-slate-300 bg-white rounded px-2 py-1.5 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 w-full max-w-[120px] mx-auto shadow-sm">
+                                                                        {ifoList.map(name => <option key={name} value={name}>{name}</option>)}
+                                                                    </select>
+                                                                )}
+                                                            </td>
+                                                            <td className="px-4 py-3 text-center">
+                                                                {client.isMenunggak ? (
+                                                                    <>
+                                                                        <div className={`text-xs font-bold mb-1 ${getOsColor(client.statusTunggakan)}`}>{client.statusTunggakan === 4 ? '>3 Bulan' : `${client.statusTunggakan} Bulan`} (Kol {client.kolektibilitas})</div>
+                                                                        <div className="text-[11px] font-black text-rose-700 bg-rose-100 border border-rose-300 inline-block px-2 py-0.5 rounded-full">{client.dpd} Hari (DPD)</div>
+                                                                    </>
+                                                                ) : (
+                                                                    <div className={`px-3 py-1 rounded-full text-xs shadow-sm inline-block font-bold mb-1 ${client.daysUntilDue === 0 ? "bg-rose-100 text-rose-700 ring-1 ring-rose-400" : (client.daysUntilDue === 1 ? "bg-orange-100 text-orange-700" : "bg-blue-100 text-blue-700")}`}>
+                                                                        {client.daysUntilDue === 0 ? "HARI H" : `H-${client.daysUntilDue}`}
+                                                                    </div>
+                                                                )}
+                                                                <div className="text-[11px] font-bold text-slate-500 mt-1.5"><i className="far fa-calendar-alt mr-1"></i>{client.jatuhTempo}</div>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-center align-middle">
+                                                                {isLunasBulanIni ? (
+                                                                    <div className="font-black text-emerald-500 text-2xl">✅</div>
+                                                                ) : (
+                                                                    <div className="font-bold text-orange-600 text-sm">{formatRupiah(client.angsuranPerBulan)}</div>
+                                                                )}
+                                                                
+                                                                <div className="mt-1 flex justify-center">
+                                                                    {isPrintMode ? (
+                                                                        isLunasBulanIni ? <span className="text-xs font-bold text-emerald-600">Sudah Bayar</span> : <span className="text-xs font-bold text-slate-300">-</span>
+                                                                    ) : (
+                                                                        <button 
+                                                                            onClick={() => updateAngsuranTerbayar(client.internalId, 1)} 
+                                                                            title="Klik untuk Tandai Sudah Bayar" 
+                                                                            className={`px-3 py-1.5 rounded text-[11px] font-bold shadow transition-all flex items-center space-x-1 ${isLunasBulanIni ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
+                                                                            disabled={isLunasBulanIni}
+                                                                        >
+                                                                            <span>{isLunasBulanIni ? 'Sudah Bayar' : '✅ Bayar'}</span>
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-center align-middle">
+                                                                {isPrintMode ? (
+                                                                    <div className="font-bold text-rose-600 text-sm">{client.janjiBayar ? formatDate(client.janjiBayar) : "-"}</div>
+                                                                ) : (
+                                                                    <input type="date" value={client.janjiBayar || ""} onChange={(e) => updateJanjiBayar(client.internalId, e.target.value)} className="border border-slate-300 bg-white rounded-md px-3 py-1.5 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-rose-500 w-full max-w-[140px] shadow-sm" />
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                }) : (
+                                                    <tr><td colSpan="5" className="px-4 py-8 text-center text-slate-500 font-medium"><i className="fas fa-check-circle text-4xl text-emerald-300 mb-3 block"></i>Tidak ada nasabah dalam pantauan EWS saat ini.</td></tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-100 px-5 py-3 border-t flex justify-end shrink-0 space-x-3">
+                                    <button onClick={exportEwsAsImage} disabled={isExportingImage} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-sm shadow flex items-center transition-colors">
+                                        <i className={`fas ${isExportingImage ? 'fa-spinner fa-spin' : 'fa-camera'} mr-2`}></i> {isExportingImage ? 'Memproses HD...' : 'Export Foto HD'}
+                                    </button>
+                                    <button onClick={() => setIsEwsModalOpen(false)} className="px-6 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg font-bold text-sm shadow transition-colors">Tutup</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL TAMBAH DATA (Tidak Ada Perubahan) */}
+                    {isModalOpen && (
+                        <div className="fixed inset-0 bg-slate-900 bg-opacity-75 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+                            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden modal-animate border-2 border-orange-500 flex flex-col max-h-[90vh]">
+                                <div className="bg-orange-500 text-white px-5 py-4 flex justify-between items-center">
+                                    <h2 className="text-lg font-bold"><i className="fas fa-user-plus mr-2"></i>Form Tambah Nasabah Baru</h2>
+                                    <button onClick={() => setIsModalOpen(false)} className="text-white hover:text-orange-200 transition-colors"><i className="fas fa-times text-xl"></i></button>
+                                </div>
+                                <form onSubmit={handleAddSubmit} className="p-6 overflow-y-auto flex-grow">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div><label className="block text-xs font-bold text-slate-500 mb-1">No. CIF</label><input type="text" name="cif" value={formData.cif} onChange={handleInputChange} placeholder="Otomatis jika kosong" className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:border-orange-500" /></div>
+                                        <div><label className="block text-xs font-bold text-slate-500 mb-1">Nama Nasabah *</label><input required type="text" name="name" value={formData.name} onChange={handleInputChange} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:border-orange-500" /></div>
+                                        <div><label className="block text-xs font-bold text-slate-500 mb-1">No. HP / WhatsApp</label><input type="text" name="noHp" placeholder="08xx xxxx xxxx" value={formData.noHp} onChange={handleInputChange} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:border-orange-500" /></div>
+                                        <div><label className="block text-xs font-bold text-slate-500 mb-1">Alamat Lengkap *</label><input required type="text" name="alamat" value={formData.alamat} onChange={handleInputChange} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:border-orange-500" /></div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">Nama IFO Pengelola *</label>
+                                            <select name="namaIfo" value={formData.namaIfo} onChange={handleInputChange} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:border-orange-500 bg-white">
+                                                {ifoList.map(name => <option key={name} value={name}>{name}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">No. Rekening *</label>
+                                            <input required type="text" name="noRek" placeholder="Rek 90xxx" value={formData.noRek} onChange={handleInputChange} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:border-orange-500" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">Tanggal Akad & Jatuh Tempo *</label>
+                                            <div className="flex space-x-2">
+                                                <input required type="date" name="tanggalAkad" title="Tanggal Akad" value={formData.tanggalAkad} onChange={handleInputChange} className="w-1/2 border border-slate-300 rounded-md px-2 py-2 text-sm outline-none focus:border-orange-500" />
+                                                <input required type="text" name="jatuhTempo" placeholder="Tgl JT (Mis: Tgl 15)" value={formData.jatuhTempo} onChange={handleInputChange} className="w-1/2 border border-slate-300 rounded-md px-2 py-2 text-sm outline-none focus:border-orange-500" />
+                                            </div>
+                                        </div>
+                                        <hr className="md:col-span-2 my-2 border-slate-200" />
+                                        <div><label className="block text-xs font-bold text-slate-500 mb-1">Plafon Pembiayaan *</label><input required type="number" name="plafon" value={formData.plafon} onChange={handleInputChange} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:border-blue-500" /></div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">Tenor & Angsuran Terbayar *</label>
+                                            <div className="flex space-x-2">
+                                                <input required type="number" name="tenor" placeholder="Tenor" value={formData.tenor} onChange={handleInputChange} className="w-1/2 border border-slate-300 rounded-md px-2 py-2 text-sm outline-none focus:border-blue-500" />
+                                                <input required type="number" name="angsuranTerbayar" placeholder="Sdh Bayar" value={formData.angsuranTerbayar} onChange={handleInputChange} className="w-1/2 border border-slate-300 rounded-md px-2 py-2 text-sm outline-none focus:border-blue-500" />
+                                            </div>
+                                        </div>
+                                        <div><label className="block text-xs font-bold text-slate-500 mb-1">Jml Angsuran /Bln *</label><input required type="number" name="angsuranPerBulan" value={formData.angsuranPerBulan} onChange={handleInputChange} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:border-blue-500" /></div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">Kolektibilitas (Kol)</label>
+                                            <select name="kolektibilitas" value={formData.kolektibilitas} onChange={handleInputChange} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:border-orange-500 bg-white">
+                                                <option value="1">1 - Lancar</option>
+                                                <option value="2">2 - Dalam Perhatian Khusus</option>
+                                                <option value="3">3 - Kurang Lancar</option>
+                                                <option value="4">4 - Diragukan</option>
+                                                <option value="5">5 - Macet</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div className="mt-5 bg-slate-100 p-4 rounded-lg border border-slate-200 text-sm">
+                                        <span className="font-bold text-slate-600">Kalkulasi Otomatis Baki Debet (Efektif): </span>
+                                        <span className="text-emerald-600 font-black text-base ml-1">
+                                            {formatRupiah(hitungBakiDebet(Number(formData.plafon), Number(formData.tenor), Number(formData.angsuranTerbayar), Number(formData.angsuranPerBulan)))}
+                                        </span>
+                                    </div>
+                                    <div className="mt-6 flex justify-end space-x-3 pt-4 border-t border-slate-200">
+                                        <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 text-sm font-bold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 transition-colors">Batal</button>
+                                        <button type="submit" className="px-5 py-2.5 text-sm font-bold text-white bg-orange-500 rounded-lg hover:bg-orange-600 shadow-md transition-colors">Simpan Data Nasabah</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
